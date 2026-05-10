@@ -81,11 +81,7 @@ const elements = {
     orgSelector: document.getElementById('orgSelector'),
     orgSelectorCol: document.getElementById('orgSelectorCol'),
 
-    updateBanner: document.getElementById('updateBanner'),
-    updateBannerText: document.getElementById('updateBannerText'),
-    updateBannerDismiss: document.getElementById('updateBannerDismiss'),
     settingsVersionLabel: document.getElementById('settingsVersionLabel'),
-    settingsUpdateLink: document.getElementById('settingsUpdateLink'),
     usageAlertsToggle: document.getElementById('usageAlertsToggle'),
     compactModeToggle: document.getElementById('compactModeToggle'),
     compactModeToggleCompact: document.getElementById('compactModeToggleCompact'),
@@ -197,14 +193,11 @@ async function init() {
         showLoginRequired();
     }
 
-    // Populate version label then check for updates after a short delay
+    // Populate version label
     const version = await window.electronAPI.getAppVersion();
     if (elements.settingsVersionLabel) {
         elements.settingsVersionLabel.textContent = `Application Version: v${version}`;
     }
-    setTimeout(checkForUpdate, 2000);
-    // Also check once every 24 hours for users who never close the app
-    setInterval(checkForUpdate, 24 * 60 * 60 * 1000);
 
     // Startup restore complete — allow _saveViewState to persist changes
     appInitializing = false;
@@ -349,18 +342,6 @@ function setupEventListeners() {
         debugLog('Session expired event received');
         credentials = { sessionKey: null, organizationId: null };
         showLoginRequired();
-    });
-
-    // Update banner
-    elements.updateBannerDismiss.addEventListener('click', () => {
-        elements.updateBanner.style.display = 'none';
-        resizeWidget();
-    });
-    elements.updateBannerText.addEventListener('click', () => {
-        window.electronAPI.openExternal(`https://github.com/SlavomirDurej/claude-usage-widget/releases/latest`);
-    });
-    elements.settingsUpdateLink.addEventListener('click', () => {
-        window.electronAPI.openExternal(`https://github.com/SlavomirDurej/claude-usage-widget/releases/latest`);
     });
 
     // Compact mode — collapse chevron (normal → compact)
@@ -727,20 +708,15 @@ function refreshExtraTimers() {
     });
 }
 
-const BANNER_HEIGHT = 28;
 const EXPAND_OVERHEAD = 28; // margin-top(12) + padding-top(6) + bottom buffer(10)
 
-function resizeWidget(bannerVisible) {
-    const hasBanner = bannerVisible !== undefined
-        ? bannerVisible
-        : elements.updateBanner.style.display !== 'none';
-    const bannerOffset = hasBanner ? BANNER_HEIGHT : 0;
+function resizeWidget() {
     const extraCount = elements.extraRows.children.length;
     const expandedOffset = isExpanded && extraCount > 0
         ? EXPAND_OVERHEAD + (extraCount * WIDGET_ROW_HEIGHT)
         : 0;
     const graphOffset = graphVisible ? GRAPH_HEIGHT : 0;
-    const totalHeight = WIDGET_HEIGHT_COLLAPSED + expandedOffset + graphOffset + bannerOffset;
+    const totalHeight = WIDGET_HEIGHT_COLLAPSED + expandedOffset + graphOffset;
     window.electronAPI.resizeWindow(totalHeight);
 }
 
@@ -980,7 +956,6 @@ function refreshTimers() {
             // Wait a few seconds for the server to update, then refresh
             setTimeout(() => {
                 fetchUsageData();
-                checkForUpdate();
             }, 3000);
         } else if (sessionDiff > 0) {
             sessionResetTriggered = false; // Reset flag when timer is active again
@@ -1545,31 +1520,6 @@ function applyTheme(theme) {
     const prefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
     const useDark = theme === 'dark' || (theme === 'system' && prefersDark);
     document.body.classList.toggle('theme-light', !useDark);
-}
-
-// Update check
-async function checkForUpdate() {
-    try {
-        const result = await window.electronAPI.checkForUpdate();
-        if (!result.hasUpdate) return;
-
-        const version = result.version;
-
-        // Show banner and expand window to compensate
-        elements.updateBannerText.textContent = `▲  Version ${version} available — click to download`;
-        elements.updateBanner.style.display = 'flex';
-        resizeWidget(true);
-
-        // Populate settings panel link if already visible
-        if (elements.settingsUpdateLink) {
-            elements.settingsUpdateLink.textContent = `→ v${version} available`;
-            elements.settingsUpdateLink.style.display = 'inline';
-        }
-
-        debugLog(`Update available: v${version}`);
-    } catch (e) {
-        debugLog('Update check failed silently', e);
-    }
 }
 
 // Start the application
