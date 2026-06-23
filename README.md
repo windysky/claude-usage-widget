@@ -1,6 +1,8 @@
 # Claude Usage Widget
 
-A beautiful, standalone desktop widget for **Windows, macOS, and Linux** that displays your Claude.ai usage statistics in real-time.
+> **Fork notice:** This is a fork of [SlavomirDurej/claude-usage-widget](https://github.com/SlavomirDurej/claude-usage-widget), maintained for **Windows and Linux only** — macOS support has been intentionally removed. It tracks the upstream project's features; for macOS builds or the canonical project, see the [original repository](https://github.com/SlavomirDurej/claude-usage-widget).
+
+A beautiful, standalone desktop widget for **Windows and Linux** that displays your Claude.ai usage statistics in real-time.
 
 ![Claude Usage Widget - Main](assets/screenshot-main.png)
 
@@ -69,7 +71,7 @@ The Extra Usage row now displays the correct currency symbol based on your accou
 
 ### Settings Options
 
-- ⚙️ **Launch at startup** — Auto-start with Windows or macOS login
+- ⚙️ **Launch at startup** — Auto-start with Windows login
 - 📌 **Hide from taskbar** — Tray-only mode
 - 🎨 **Theme selector** — Dark / Light / System
 - ⚠️ **Warning thresholds** — Configurable amber and red levels for usage bars
@@ -89,17 +91,6 @@ The Extra Usage row now displays the correct currency symbol based on your accou
 2. Run the installer or portable exe
 3. Launch "Claude Usage Widget" from the Start Menu (installer) or directly (portable)
 4. **To launch at Windows startup (portable only):** Press `Win+R`, type `shell:startup`, and copy the portable `.exe` into that folder. To update, copy the new version in and delete the old one.
-
-**macOS:**
-1. Download the latest `Claude-Usage-Widget-{version}-macOS-arm64.dmg` (Apple Silicon) or `Claude-Usage-Widget-{version}-macOS-x64.dmg` (Intel) from [Releases](../../releases)
-2. Open the DMG and drag the app to your Applications folder
-3. Launch "Claude Usage Widget" from Applications
-
-> **⚠️ macOS Security Notice:** Because this app is not yet notarized with Apple, macOS Gatekeeper may show a "damaged or can't be opened" warning. To fix this, run the following command in Terminal after installing:
-> ```
-> xattr -cr /Applications/Claude\ Usage\ Widget.app
-> ```
-> Then try launching the app again.
 
 **Linux:**
 1. Download the latest `Claude-Usage-Widget-{version}-linux-x86_64.AppImage` (Intel/AMD) or `Claude-Usage-Widget-{version}-linux-arm64.AppImage` (ARM) from [Releases](../../releases)
@@ -161,7 +152,7 @@ cp ~/.local/share/applications/claude-usage-widget.desktop ~/.config/autostart/
 - npm (comes with Node.js)
 
 ```bash
-git clone https://github.com/SlavomirDurej/claude-usage-widget.git
+git clone https://github.com/windysky/claude-usage-widget.git
 cd claude-usage-widget
 npm install
 npm start
@@ -185,7 +176,7 @@ npm start
 - **Drag** — Click and drag the title bar to move the widget
 - **Refresh** — Click the refresh icon to update data immediately
 - **Graph** — Click the graph icon to toggle usage history
-- **Minimize** — Click the minus icon to hide to system tray / dock
+- **Minimize** — Click the minus icon to hide to system tray
 - **Close** — Click the X to Close the app
 
 ### System Tray
@@ -239,7 +230,6 @@ If issues persist, open a [Support discussion](../../discussions/categories/supp
 
 ## Roadmap
 
-- [x] macOS support
 - [x] Linux support
 - [x] Settings panel
 - [x] Remember window position
