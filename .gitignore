@@ -52,3 +52,9 @@ developerID_application.cer
 
 # Temp commit message files
 commit_msg.txt
+
+# MoAI local tooling & session handoff notes (never pushed)
+.moai/
+.mcp.json
+PROJECT_HANDOFF.md
+PROJECT_LOG.md
