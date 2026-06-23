@@ -1,7 +1,9 @@
-# Staged Changes (Local Only)
+# Staged Changes
 
-Changes accumulating here are waiting to be merged into `develop`.
-This file is gitignored — it never gets pushed to the remote repo.
+Changes accumulating here have already been merged into `develop`.
+We keep track of these changes/fixes/features and when we have enough for a new release we decide on the next version number.
+
+This file is tracked in the repo and visible to everyone.
 
 ---
 
@@ -9,32 +11,10 @@ This file is gitignored — it never gets pushed to the remote repo.
 
 | Branch | Description |
 |--------|-------------|
-| `fix/weekly-tray-click-duplicate` | Tray icon restore fixes |
+| `fix/ci-actions-node20` | Bump actions/checkout and actions/setup-node to v5; Node.js matrix 18→20 |
 
 ---
 
 ## Changes
-
-### fix/weekly-tray-click-duplicate
-
-**Tray icon — duplicate click handler removed**
-The `weeklyTray` click handler was registered twice in `createTray()`. When the
-window was hidden and the weekly tray icon was clicked, both handlers fired in
-sequence: the first restored the window, the second immediately hid it again,
-causing the window to blink on screen and disappear.
-Fix: removed the duplicate handler.
-
-**Tray icon — double-blink on restore fixed (Windows)**
-On Windows, showing a hidden transparent + frameless + alwaysOnTop window caused
-two visible render flashes before the window settled. This is a Windows DWM
-layered-window artifact: the compositor does an initial render pass, then a second
-pass when Electron re-asserts the alwaysOnTop z-order.
-Fix: added `showMainWindowClean()` helper that sets opacity to 0, calls `show()`,
-then restores opacity to 1 after ~50ms once the DWM has composited the window.
-Applies to Windows only (`process.platform === 'win32'`). macOS and Linux are
-unaffected and continue to use a plain `show()` call.
-Applied to both tray click handlers and the "Show Widget" context menu item.
-
----
 
 *Add new entries above this line as additional branches are staged.*

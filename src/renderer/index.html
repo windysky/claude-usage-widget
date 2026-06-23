@@ -45,6 +45,12 @@
                 </div>
             </div>
 
+            <!-- Update Banner (hidden by default) -->
+            <div class="update-banner" id="updateBanner" style="display: none;">
+                <span class="update-banner-text" id="updateBannerText"></span>
+                <button class="update-banner-dismiss" id="updateBannerDismiss" title="Dismiss">✕</button>
+            </div>
+
             <!-- Loading State -->
             <div class="loading-container" id="loadingContainer">
                 <div class="spinner"></div>
@@ -226,12 +232,13 @@
                     <div class="settings-rows">
                         <!-- Row 1: two toggles -->
                         <div class="settings-row-2col">
-                            <div class="settings-col">
+                            <div class="settings-col" id="autoStartCol">
                                 <span class="settings-row-label">Launch at startup</span>
                                 <label class="toggle-switch">
                                     <input type="checkbox" id="autoStartToggle">
                                     <span class="toggle-slider"></span>
                                 </label>
+                                <span class="settings-row-hint" id="autoStartHint" style="display: none;">Not supported on Linux</span>
                             </div>
                             <div class="settings-col">
                                 <span class="settings-row-label" id="trayLabel">Hide from taskbar</span>
@@ -252,15 +259,15 @@
                                 </label>
                             </div>
                             <div class="settings-col">
-                                <span class="settings-row-label">Usage Alerts</span>
+                                <span class="settings-row-label">Show tray stats</span>
                                 <label class="toggle-switch">
-                                    <input type="checkbox" id="usageAlertsToggle">
+                                    <input type="checkbox" id="showTrayStatsToggle">
                                     <span class="toggle-slider"></span>
                                 </label>
                             </div>
                         </div>
 
-                        <!-- Row 3: compact mode -->
+                        <!-- Row 3: compact mode + usage alerts -->
                         <div class="settings-row-2col">
                             <div class="settings-col">
                                 <span class="settings-row-label">Compact mode</span>
@@ -270,11 +277,15 @@
                                 </label>
                             </div>
                             <div class="settings-col">
-                                <!-- Organization selector placeholder -->
+                                <span class="settings-row-label">Usage Alerts</span>
+                                <label class="toggle-switch">
+                                    <input type="checkbox" id="usageAlertsToggle">
+                                    <span class="toggle-slider"></span>
+                                </label>
                             </div>
                         </div>
 
-                        <!-- Row 3: theme + show tray stats -->
+                        <!-- Row 4: theme + organization selector -->
                         <div class="settings-row-2col">
                             <div class="settings-col">
                                 <span class="settings-row-label">Theme</span>
@@ -284,12 +295,12 @@
                                     <button class="theme-btn" data-theme="system">System</button>
                                 </div>
                             </div>
-                            <div class="settings-col">
-                                <span class="settings-row-label">Show tray stats</span>
-                                <label class="toggle-switch">
-                                    <input type="checkbox" id="showTrayStatsToggle">
-                                    <span class="toggle-slider"></span>
-                                </label>
+                            <div class="settings-col" id="orgSelectorCol" style="display: none;">
+                                <span class="settings-row-label">Organization</span>
+                                <select id="orgSelector" class="settings-select">
+                                    <option value="org1">My Org (Personal)</option>
+                                    <option value="org2">Acme Corp (Team)</option>
+                                </select>
                             </div>
                         </div>
 
@@ -341,23 +352,11 @@
                             </div>
                         </div>
 
-                        <!-- Row 7: organization selector (when available) -->
-                        <div class="settings-row-2col">
-                            <div class="settings-col" id="orgSelectorCol" style="display: none;">
-                                <span class="settings-row-label">Organization</span>
-                                <select id="orgSelector" class="settings-select">
-                                    <option value="org1">My Org (Personal)</option>
-                                    <option value="org2">Acme Corp (Team)</option>
-                                </select>
-                            </div>
-                            <div class="settings-col">
-                                <!-- placeholder -->
-                            </div>
-                        </div>
                     </div>
 
                     <div class="settings-footer">
                         <span class="settings-version-label" id="settingsVersionLabel">v1.5.0</span>
+                        <span class="settings-update-link" id="settingsUpdateLink" style="display: none;"></span>
                         <button class="logout-btn" id="logoutBtn">Log Out</button>
                         <button class="coffee-btn" id="coffeeBtn">
                             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor"

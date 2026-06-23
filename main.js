@@ -1,7 +1,11 @@
 const { app, BrowserWindow, ipcMain, Tray, Menu, session, shell, Notification, safeStorage, nativeImage } = require('electron');
 const path = require('path');
+const https = require('https');
 const Store = require('electron-store');
 const { fetchViaWindow, fetchMultipleViaWindow } = require('./src/fetch-via-window');
+
+const GITHUB_OWNER = 'SlavomirDurej';
+const GITHUB_REPO = 'claude-usage-widget';
 
 // Migration: Handle old encrypted config files from v1.7.0 and earlier
 // Must happen BEFORE creating Store instance to prevent parse errors
@@ -54,19 +58,33 @@ let weeklyTray = null;   // Tray icon for Weekly usage
 
 const WIDGET_WIDTH = process.platform === 'darwin' ? 590 : 560;
 const WIDGET_HEIGHT = 155;
-const HISTORY_RETENTION_DAYS = 30;
+const HISTORY_RETENTION_DAYS = 8;
 const CHART_DAYS = 7;
 const MAX_HISTORY_SAMPLES = 10000; // Cap total samples to prevent unbounded growth
 
 function storeUsageHistory(data) {
+  // Skip write if the session is invalid — a live session always has resets_at timestamps.
+  // Absent timestamps mean the API returned empty/zeroed data (dead session, removed device, etc.)
+  if (!data.five_hour?.resets_at && !data.seven_day?.resets_at) {
+    debugLog('[History] Skipping write — no reset timestamps, likely invalid session data');
+    return;
+  }
+
+  const organizationId = store.get('organizationId');
+  const historyKey = organizationId ? `usageHistory_${organizationId}` : 'usageHistory';
+
   const timestamp = Date.now();
-  let history = store.get('usageHistory', []);
+  let history = store.get(historyKey, []);
 
   history.push({
     timestamp,
     session: data.five_hour?.utilization || 0,
     weekly: data.seven_day?.utilization || 0,
     sonnet: data.seven_day_sonnet?.utilization || 0,
+    opus: data.seven_day_opus?.utilization || 0,
+    cowork: data.seven_day_cowork?.utilization || 0,
+    design: data.seven_day_omelette?.utilization || 0,
+    oauthApps: data.seven_day_oauth_apps?.utilization || 0,
     extraUsage: data.extra_usage?.utilization || 0
   });
 
@@ -74,12 +92,45 @@ function storeUsageHistory(data) {
   const cutoff = timestamp - (HISTORY_RETENTION_DAYS * 24 * 60 * 60 * 1000);
   history = history.filter((entry) => entry.timestamp > cutoff);
 
-  // If still over limit, drop oldest samples
   if (history.length > MAX_HISTORY_SAMPLES) {
     history = history.slice(history.length - MAX_HISTORY_SAMPLES);
   }
 
-  store.set('usageHistory', history);
+  store.set(historyKey, history);
+}
+
+// Migrate legacy single-key history to the per-org namespaced key at startup,
+// so get-usage-history reads from the right place before any fetch has run.
+function migrateUsageHistoryKey() {
+  const organizationId = store.get('organizationId');
+  if (!organizationId) return;
+  const historyKey = `usageHistory_${organizationId}`;
+  if (store.has(historyKey)) return;
+  const legacy = store.get('usageHistory', []);
+  if (legacy.length > 0) {
+    store.set(historyKey, legacy);
+    store.delete('usageHistory');
+    debugLog('[History] Migrated legacy usageHistory →', historyKey);
+  }
+}
+
+// Prune all per-org history keys at startup. Trims entries older than the retention
+// window and deletes the key entirely if nothing remains — cleans up abandoned accounts.
+function pruneStaleHistoryKeys() {
+  const cutoff = Date.now() - (HISTORY_RETENTION_DAYS * 24 * 60 * 60 * 1000);
+  const allKeys = Object.keys(store.store);
+  for (const key of allKeys) {
+    if (!key.startsWith('usageHistory_') && key !== 'usageHistory') continue;
+    const history = store.get(key, []);
+    const fresh = history.filter((entry) => entry.timestamp > cutoff);
+    if (fresh.length === 0) {
+      store.delete(key);
+      debugLog('[History] Deleted stale key:', key);
+    } else if (fresh.length < history.length) {
+      store.set(key, fresh);
+      debugLog('[History] Pruned', history.length - fresh.length, 'old entries from', key);
+    }
+  }
 }
 
 // Set session-level User-Agent to avoid Electron detection
@@ -492,18 +543,23 @@ function generateRedXIcon() {
 function showMainWindowClean() {
   if (!mainWindow || mainWindow.isDestroyed()) return;
   if (mainWindow.isMinimized()) mainWindow.restore();
-  if (process.platform === 'win32') {
-    mainWindow.setOpacity(0);
-    mainWindow.show();
-    setTimeout(() => {
-      if (mainWindow && !mainWindow.isDestroyed()) mainWindow.setOpacity(1);
-    }, 50);
-  } else {
-    mainWindow.show();
-  }
+  mainWindow.show();
+  mainWindow.focus();
 }
 
 function createTray() {
+  // Respect the tray stats setting even when createTray is called from generic refresh paths.
+  if (!store.get('settings.showTrayStats', false)) {
+    destroyTrayIcons();
+    return;
+  }
+
+  // Rebuild from a clean state if only one of the two stats tray icons survived.
+  const hasSessionTray = sessionTray && !sessionTray.isDestroyed();
+  const hasWeeklyTray = weeklyTray && !weeklyTray.isDestroyed();
+  if (hasSessionTray && hasWeeklyTray) return;
+  if (hasSessionTray || hasWeeklyTray) destroyTrayIcons();
+
   try {
     const staticIconPath = path.join(__dirname, process.platform === 'darwin' ? 'assets/tray-icon-mac.png' : process.platform === 'linux' ? 'assets/tray-icon-linux.png' : 'assets/tray-icon.png');
     
@@ -591,6 +647,70 @@ function createTray() {
   }
 }
 
+function destroyTrayIcons() {
+  // Centralized tray cleanup keeps Linux appindicator hosts from showing stale icons.
+  const trays = [sessionTray, weeklyTray];
+  sessionTray = null;
+  weeklyTray = null;
+
+  for (const tray of trays) {
+    if (!tray || tray.isDestroyed()) continue;
+
+    try {
+      tray.removeAllListeners();
+      tray.setContextMenu(null);
+      tray.setToolTip('');
+
+      // On Linux, some appindicator hosts repaint stale tray entries lazily.
+      // Clearing the image before destroy gives the host an explicit update.
+      if (process.platform === 'linux') {
+        tray.setImage(nativeImage.createEmpty());
+      }
+    } catch (error) {
+      console.error('Failed to clear tray icon:', error);
+    }
+
+    try {
+      tray.destroy();
+    } catch (error) {
+      console.error('Failed to destroy tray icon:', error);
+    }
+  }
+}
+
+/**
+ * Format reset time for tray tooltip
+ * @param {string} resetsAt - ISO timestamp string
+ * @param {string} timeFormat - '12h' or '24h'
+ * @param {boolean} includeDate - Whether to include the date (for weekly resets)
+ * @returns {string} Formatted time string
+ */
+function formatResetTime(resetsAt, timeFormat, includeDate = false) {
+  if (!resetsAt) return null;
+  const date = new Date(resetsAt);
+  
+  const formatTime = () => {
+    if (timeFormat === '24h') {
+      return `${date.getHours().toString().padStart(2, '0')}:${date.getMinutes().toString().padStart(2, '0')}`;
+    } else {
+      let hours = date.getHours();
+      const minutes = date.getMinutes().toString().padStart(2, '0');
+      const ampm = hours >= 12 ? 'PM' : 'AM';
+      hours = hours % 12 || 12;
+      return `${hours}:${minutes} ${ampm}`;
+    }
+  };
+  
+  if (includeDate) {
+    const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+    const monthStr = months[date.getMonth()];
+    const dayNum = date.getDate();
+    return `${monthStr} ${dayNum}, ${formatTime()}`;
+  } else {
+    return formatTime();
+  }
+}
+
 /**
  * Update tray icons with current usage data
  * @param {Object} usageData - Usage data object containing session and weekly percentages
@@ -599,13 +719,17 @@ function updateTrayIcon(usageData) {
   const showTrayStats = store.get('settings.showTrayStats', false);
   
   if (!showTrayStats) {
-    // Destroy both tray icons when feature is disabled
-    if (sessionTray && !sessionTray.isDestroyed()) {
-      sessionTray.destroy();
-      sessionTray = null;
-    }
+    // Destroy only weeklyTray, keeping sessionTray alive as a persistent restore
+    // icon. Without it, hide() on Windows leaves no way to restore the window.
+    // Apply the same Linux appindicator cleanup that destroyTrayIcons() uses.
     if (weeklyTray && !weeklyTray.isDestroyed()) {
-      weeklyTray.destroy();
+      try {
+        weeklyTray.removeAllListeners();
+        weeklyTray.setContextMenu(null);
+        weeklyTray.setToolTip('');
+        if (process.platform === 'linux') weeklyTray.setImage(nativeImage.createEmpty());
+        weeklyTray.destroy();
+      } catch (_) {}
       weeklyTray = null;
     }
     return;
@@ -618,13 +742,16 @@ function updateTrayIcon(usageData) {
 
   if ((!sessionTray || sessionTray.isDestroyed()) && (!weeklyTray || weeklyTray.isDestroyed())) return;
 
-  // Get threshold settings
+  // Get threshold settings and time format
   const warnThreshold = store.get('settings.warnThreshold', 75);
   const dangerThreshold = store.get('settings.dangerThreshold', 90);
+  const timeFormat = store.get('settings.timeFormat', '12h');
 
-  // Extract percentages from usage data
+  // Extract percentages and reset times from usage data
   const sessionPercent = usageData?.five_hour?.utilization || 0;
+  const sessionResetsAt = usageData?.five_hour?.resets_at;
   const weeklyPercent = usageData?.seven_day?.utilization || 0;
+  const weeklyResetsAt = usageData?.seven_day?.resets_at;
 
   try {
     // Generate Weekly icon (blue background) - LEFT position
@@ -637,7 +764,12 @@ function updateTrayIcon(usageData) {
     }
     if (weeklyTray && !weeklyTray.isDestroyed()) {
       weeklyTray.setImage(weeklyIcon);
-      weeklyTray.setToolTip(`Weekly: ${Math.round(weeklyPercent)}%`);
+      let weeklyTooltip = `Weekly: ${Math.round(weeklyPercent)}%`;
+      const weeklyResetTime = formatResetTime(weeklyResetsAt, timeFormat, true);
+      if (weeklyResetTime) {
+        weeklyTooltip += `\nResets: ${weeklyResetTime}`;
+      }
+      weeklyTray.setToolTip(weeklyTooltip);
     }
     
     // Generate Session icon (purple background) - RIGHT position
@@ -650,7 +782,12 @@ function updateTrayIcon(usageData) {
     }
     if (sessionTray && !sessionTray.isDestroyed()) {
       sessionTray.setImage(sessionIcon);
-      sessionTray.setToolTip(`Session: ${Math.round(sessionPercent)}%`);
+      let sessionTooltip = `Session: ${Math.round(sessionPercent)}%`;
+      const sessionResetTime = formatResetTime(sessionResetsAt, timeFormat, false);
+      if (sessionResetTime) {
+        sessionTooltip += `\nResets: ${sessionResetTime}`;
+      }
+      sessionTray.setToolTip(sessionTooltip);
     }
   } catch (error) {
     console.error('Failed to update tray icons:', error);
@@ -770,18 +907,26 @@ ipcMain.handle('validate-session-key', async (event, sessionKey) => {
 
 ipcMain.on('minimize-window', () => {
   if (mainWindow) {
-    // macOS: minimize to Dock so the user can restore via Dock click
-    // Windows/Linux: hide to tray (taskbar may be hidden, tray is the restore path)
     if (process.platform === 'darwin') {
       mainWindow.minimize();
     } else {
-      mainWindow.hide();
+      const minimizeToTray = store.get('settings.minimizeToTray', false);
+      if (minimizeToTray) {
+        mainWindow.hide();
+      } else {
+        mainWindow.minimize();
+      }
     }
   }
 });
 
 ipcMain.on('close-window', () => {
-  app.quit();
+  const showTrayStats = store.get('settings.showTrayStats', false);
+  if (showTrayStats && mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.hide();
+  } else {
+    app.quit();
+  }
 });
 
 ipcMain.on('resize-window', (event, height) => {
@@ -828,7 +973,9 @@ ipcMain.handle('get-app-version', () => {
 });
 
 ipcMain.handle('get-usage-history', () => {
-  const history = store.get('usageHistory', []);
+  const organizationId = store.get('organizationId');
+  const historyKey = organizationId ? `usageHistory_${organizationId}` : 'usageHistory';
+  const history = store.get(historyKey, []);
   const cutoff = Date.now() - (CHART_DAYS * 24 * 60 * 60 * 1000);
   return history
     .filter((entry) => entry.timestamp > cutoff)
@@ -875,7 +1022,10 @@ ipcMain.handle('get-settings', () => {
 });
 
 ipcMain.handle('save-settings', (event, settings) => {
-  store.set('settings.autoStart', settings.autoStart);
+  const supportsLoginItems = process.platform !== 'linux';
+  const autoStart = supportsLoginItems ? settings.autoStart : false;
+
+  store.set('settings.autoStart', autoStart);
   store.set('settings.minimizeToTray', settings.minimizeToTray);
   store.set('settings.alwaysOnTop', settings.alwaysOnTop);
   store.set('settings.theme', settings.theme);
@@ -890,11 +1040,15 @@ ipcMain.handle('save-settings', (event, settings) => {
   store.set('settings.expandedOpen', settings.expandedOpen);
   store.set('settings.showTrayStats', settings.showTrayStats);
 
+  const isPortable = process.platform === 'win32' && !!process.env.PORTABLE_EXECUTABLE_FILE;
+
   // openAtLogin is not supported on Linux — Electron silently ignores it.
   // Skip the call entirely to avoid misleading behaviour.
-  if (process.platform !== 'linux') {
+  // Also skip for portable builds — autorun via registry is unreliable when the
+  // exe path changes with each version. Users should use shell:startup instead.
+  if (supportsLoginItems && !isPortable) {
     app.setLoginItemSettings({
-      openAtLogin: settings.autoStart,
+      openAtLogin: autoStart,
       ...(process.platform !== 'darwin' && { path: app.getPath('exe') })
     });
   }
@@ -908,10 +1062,18 @@ ipcMain.handle('save-settings', (event, settings) => {
     mainWindow.setAlwaysOnTop(settings.alwaysOnTop, 'floating');
   }
 
-  // Refresh tray icons immediately with new threshold settings
-  const latestUsageData = store.get('latestUsageData');
-  if (latestUsageData) {
-    updateTrayIcon(latestUsageData);
+  if (!settings.showTrayStats) {
+    // Remove tray icons immediately when the setting is turned off from the UI.
+    destroyTrayIcons();
+  } else {
+    // Refresh tray icons immediately with new threshold settings
+    const latestUsageData = store.get('latestUsageData');
+    if (latestUsageData) {
+      updateTrayIcon(latestUsageData);
+    } else {
+      // Create empty tray icons now; the next usage refresh will draw the stats.
+      createTray();
+    }
   }
 
   return true;
@@ -1017,6 +1179,75 @@ ipcMain.handle('detect-session-key', async () => {
     loginWin.loadURL('https://claude.ai/login');
   });
 });
+
+// Check GitHub releases for a newer version
+ipcMain.handle('check-for-update', () => {
+  return new Promise((resolve) => {
+    const options = {
+      hostname: 'api.github.com',
+      path: `/repos/${GITHUB_OWNER}/${GITHUB_REPO}/releases/latest`,
+      method: 'GET',
+      headers: {
+        'User-Agent': 'claude-usage-widget',
+        'Accept': 'application/vnd.github+json'
+      },
+      timeout: 5000
+    };
+
+    const req = https.request(options, (res) => {
+      let body = '';
+      res.on('data', (chunk) => { body += chunk; });
+      res.on('end', () => {
+        try {
+          const data = JSON.parse(body);
+          const tag = (data.tag_name || '').replace(/^v/, '');
+          const current = app.getVersion();
+          if (tag && isNewerVersion(tag, current)) {
+            resolve({ hasUpdate: true, version: tag });
+          } else {
+            resolve({ hasUpdate: false, version: null });
+          }
+        } catch {
+          resolve({ hasUpdate: false, version: null });
+        }
+      });
+    });
+
+    req.on('error', () => resolve({ hasUpdate: false, version: null }));
+    req.on('timeout', () => { req.destroy(); resolve({ hasUpdate: false, version: null }); });
+    req.end();
+  });
+});
+
+function isNewerVersion(remote, local) {
+  try {
+    const parseVersion = (ver) => {
+      const [mainVer, preRelease] = ver.split('-');
+      const parts = mainVer.split('.').map(Number);
+      return {
+        major: parts[0] || 0,
+        minor: parts[1] || 0,
+        patch: parts[2] || 0,
+        preRelease: preRelease || null
+      };
+    };
+
+    const r = parseVersion(remote);
+    const l = parseVersion(local);
+
+    // Never notify about pre-release versions (rc, beta, alpha, etc.)
+    if (r.preRelease !== null) return false;
+
+    // Compare major.minor.patch
+    if (r.major !== l.major) return r.major > l.major;
+    if (r.minor !== l.minor) return r.minor > l.minor;
+    if (r.patch !== l.patch) return r.patch > l.patch;
+
+    // Same version numbers — notify if local is a pre-release and remote is stable
+    // e.g. local=1.7.5-rc.1, remote=1.7.5 → user should be told stable is out
+    return l.preRelease !== null;
+  } catch { return false; }
+}
 
 ipcMain.handle('fetch-usage-data', async (event, options = {}) => {
   // Use the same credential retrieval logic as get-credentials
@@ -1195,8 +1426,14 @@ app.whenReady().then(async () => {
     await setSessionCookie(sessionKey);
   }
 
+  migrateUsageHistoryKey();
+  pruneStaleHistoryKeys();
+
   createMainWindow();
-  createTray();
+  // Avoid creating temporary tray icons during startup when tray stats are disabled.
+  if (store.get('settings.showTrayStats', false)) {
+    createTray();
+  }
 
   // Apply persisted settings
   const minimizeToTray = store.get('settings.minimizeToTray', false);

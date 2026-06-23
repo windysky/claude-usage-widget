@@ -8,21 +8,21 @@ A beautiful, standalone desktop widget for **Windows, macOS, and Linux** that di
 
 ## Features
 
-🎯 **Real-time Usage Tracking** — Monitor both session and weekly usage limits
-📊 **Visual Progress Bars** — Clean, gradient progress indicators with configurable warning thresholds
-⏱️ **Countdown Timers** — Circular timers showing time elapsed in the current session window
-🔄 **Auto-refresh** — Updates every 5 minutes automatically, with animated refresh indicator
-📈 **Usage History Graph** — Toggleable 7-day chart showing session and weekly trends over time
-🌍 **Currency Support** — Extra usage displays your account's billing currency (€, £, $)
-🎨 **Modern UI** — Sleek, draggable widget with dark and light themes
-🔒 **Secure** — Encrypted credential storage
-📍 **Always on Top** — User-controlled, stays visible across all workspaces
-💾 **System Tray** — Minimizes to tray for easy access
-⚙️ **Settings Panel** — Persistent preferences for startup, theme, tray, thresholds, and date/time formats
-🔔 **Usage Alerts** — Desktop notifications when usage crosses configurable warn/danger thresholds
-🔔 **Update Notifications** — Automatic check for new releases on startup
-🕐 **Configurable Date & Time Formats** — 12h/24h time, and flexible weekly reset date display
-📐 **Compact Mode** — Minimal view for when you just need a quick glance
+🎯 **Real-time Usage Tracking** — Monitor both session and weekly usage limits  
+📊 **Visual Progress Bars** — Clean, gradient progress indicators with configurable warning thresholds  
+⏱️ **Countdown Timers** — Circular timers showing time elapsed in the current session window  
+🔄 **Auto-refresh** — Updates every 5 minutes automatically, with animated refresh indicator  
+📈 **Usage History Graph** — Toggleable 7-day chart showing session and weekly trends over time  
+🌍 **Currency Support** — Extra usage displays your account's billing currency (€, £, $)  
+🎨 **Modern UI** — Sleek, draggable widget with dark and light themes  
+🔒 **Secure** — Encrypted credential storage  
+📍 **Always on Top** — User-controlled, stays visible across all workspaces  
+💾 **System Tray** — Minimizes to tray for easy access  
+⚙️ **Settings Panel** — Persistent preferences for startup, theme, tray, thresholds, and date/time formats  
+🔔 **Usage Alerts** — Desktop notifications when usage crosses configurable warn/danger thresholds  
+🔔 **Update Notifications** — Automatic check for new releases on startup  
+🕐 **Configurable Date & Time Formats** — 12h/24h time, and flexible weekly reset date display  
+📐 **Compact Mode** — Minimal view for when you just need a quick glance  
 
 ---
 
@@ -43,12 +43,15 @@ A toggleable usage history graph now sits below the main widget. Click the graph
 
 ![Claude Usage Widget - Graph](assets/screenshot-graph.png)
 
-- Displays up to **7 days** of session and weekly usage history
-- History **persists across restarts** — no need to keep the app running continuously
+- Displays up to **7 days** of collected usage data points
+- **Data points are captured each time the app refreshes** (every 5 minutes by default when running)
+- History **persists across restarts** — collected data is retained when you close and reopen the app
 - Sonnet and Extra Usage lines appear automatically when those sections are relevant
 - **Adaptive x-axis labels** — shows times for short spans, weekday+hour for medium spans, and dates for longer spans
 - Respects your **12h/24h time format** setting
 - Hover tooltip shows exact timestamp and value
+
+> **Note:** The graph shows usage snapshots captured at each refresh interval while the app is running. Time periods when the app is closed are not represented on the graph.
 
 ### 🌍 Currency Support
 The Extra Usage row now displays the correct currency symbol based on your account's billing currency — **€**, **£**, or **$**.
@@ -85,6 +88,7 @@ The Extra Usage row now displays the correct currency symbol based on your accou
 1. Download the latest `Claude-Usage-Widget-{version}-win-Setup.exe` (installer) or `Claude-Usage-Widget-{version}-win-portable.exe` (no install needed) from [Releases](../../releases)
 2. Run the installer or portable exe
 3. Launch "Claude Usage Widget" from the Start Menu (installer) or directly (portable)
+4. **To launch at Windows startup (portable only):** Press `Win+R`, type `shell:startup`, and copy the portable `.exe` into that folder. To update, copy the new version in and delete the old one.
 
 **macOS:**
 1. Download the latest `Claude-Usage-Widget-{version}-macOS-arm64.dmg` (Apple Silicon) or `Claude-Usage-Widget-{version}-macOS-x64.dmg` (Intel) from [Releases](../../releases)
@@ -182,7 +186,7 @@ npm start
 - **Refresh** — Click the refresh icon to update data immediately
 - **Graph** — Click the graph icon to toggle usage history
 - **Minimize** — Click the minus icon to hide to system tray / dock
-- **Close** — Click the X to minimize to tray (doesn't exit)
+- **Close** — Click the X to Close the app
 
 ### System Tray
 
@@ -259,6 +263,12 @@ Special thanks to these contributors who have improved the widget:
 - [@dion-jy](https://github.com/dion-jy) - Login flow architecture improvements
 - [@goooseman](https://github.com/goooseman) - Login window security improvements
 - [@sergkuzn](https://github.com/sergkuzn) - Linux desktop launcher & autostart documentation
+
+---
+
+## License
+
+This project is licensed under the [MIT License](LICENSE) - see the LICENSE file for details.
 
 ---
 

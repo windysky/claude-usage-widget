@@ -5,6 +5,7 @@ let countdownInterval = null;
 let latestUsageData = null;
 let isExpanded = false;
 let isCompactMode = false;
+let _settingsOpenedFromCompact = false;
 let usageChart = null;
 let graphVisible = false;
 let graphWasVisible = false; // preserves graph state across compact mode toggle
@@ -68,7 +69,9 @@ const elements = {
     closeSettingsBtn: document.getElementById('closeSettingsBtn'),
     logoutBtn: document.getElementById('logoutBtn'),
     coffeeBtn: document.getElementById('coffeeBtn'),
+    autoStartCol: document.getElementById('autoStartCol'),
     autoStartToggle: document.getElementById('autoStartToggle'),
+    autoStartHint: document.getElementById('autoStartHint'),
     minimizeToTrayToggle: document.getElementById('minimizeToTrayToggle'),
     alwaysOnTopToggle: document.getElementById('alwaysOnTopToggle'),
     showTrayStatsToggle: document.getElementById('showTrayStatsToggle'),
@@ -81,7 +84,11 @@ const elements = {
     orgSelector: document.getElementById('orgSelector'),
     orgSelectorCol: document.getElementById('orgSelectorCol'),
 
+    updateBanner: document.getElementById('updateBanner'),
+    updateBannerText: document.getElementById('updateBannerText'),
+    updateBannerDismiss: document.getElementById('updateBannerDismiss'),
     settingsVersionLabel: document.getElementById('settingsVersionLabel'),
+    settingsUpdateLink: document.getElementById('settingsUpdateLink'),
     usageAlertsToggle: document.getElementById('usageAlertsToggle'),
     compactModeToggle: document.getElementById('compactModeToggle'),
     compactModeToggleCompact: document.getElementById('compactModeToggleCompact'),
@@ -193,11 +200,14 @@ async function init() {
         showLoginRequired();
     }
 
-    // Populate version label
+    // Populate version label then check for updates after a short delay
     const version = await window.electronAPI.getAppVersion();
     if (elements.settingsVersionLabel) {
         elements.settingsVersionLabel.textContent = `Application Version: v${version}`;
     }
+    setTimeout(checkForUpdate, 2000);
+    // Also check once every 24 hours for users who never close the app
+    setInterval(checkForUpdate, 24 * 60 * 60 * 1000);
 
     // Startup restore complete — allow _saveViewState to persist changes
     appInitializing = false;
@@ -291,7 +301,16 @@ function setupEventListeners() {
     elements.closeSettingsBtn.addEventListener('click', async () => {
         await saveSettings();
         elements.settingsOverlay.style.display = 'none';
-        if (!isCompactMode) resizeWidget();
+        if (_settingsOpenedFromCompact) {
+            _settingsOpenedFromCompact = false;
+            if (isCompactMode) {
+                window.electronAPI.setCompactMode(true);
+            } else {
+                resizeWidget();
+            }
+        } else if (!isCompactMode) {
+            resizeWidget();
+        }
         startAutoUpdate();
     });
 
@@ -344,6 +363,18 @@ function setupEventListeners() {
         showLoginRequired();
     });
 
+    // Update banner
+    elements.updateBannerDismiss.addEventListener('click', () => {
+        elements.updateBanner.style.display = 'none';
+        resizeWidget();
+    });
+    elements.updateBannerText.addEventListener('click', () => {
+        window.electronAPI.openExternal(`https://github.com/SlavomirDurej/claude-usage-widget/releases/latest`);
+    });
+    elements.settingsUpdateLink.addEventListener('click', () => {
+        window.electronAPI.openExternal(`https://github.com/SlavomirDurej/claude-usage-widget/releases/latest`);
+    });
+
     // Compact mode — collapse chevron (normal → compact)
     elements.compactCollapseBtn.addEventListener('click', async () => {
         applyCompactMode(true);
@@ -366,17 +397,16 @@ function setupEventListeners() {
     // Organization selector — change triggers immediate save and refresh
     elements.orgSelector.addEventListener('change', handleOrgChange);
 
-    // Settings button — open compact settings if in compact mode, full settings otherwise
+    // Settings button — always open full settings; if in compact mode, temporarily expand the window first
     elements.settingsBtn.addEventListener('click', async () => {
         stopAutoUpdate();
         if (isCompactMode) {
-            elements.compactModeToggleCompact.checked = isCompactMode;
-            elements.compactSettingsOverlay.style.display = 'flex';
-        } else {
-            await loadSettings();
-            elements.settingsOverlay.style.display = 'flex';
-            window.electronAPI.resizeWindow(318); // Increased from 288 for org selector row
+            _settingsOpenedFromCompact = true;
+            window.electronAPI.setCompactMode(false);
         }
+        await loadSettings();
+        elements.settingsOverlay.style.display = 'flex';
+        window.electronAPI.resizeWindow(318);
     });
 
     // Close compact settings — apply compact toggle value then close
@@ -516,10 +546,11 @@ function formatCurrency(amountCents, currencyCode) {
 
 // Extra row label mapping for API fields
 const EXTRA_ROW_CONFIG = {
-    seven_day_sonnet: { label: 'Sonnet (7d)', color: 'weekly' },
+    seven_day_sonnet: { label: 'Sonnet (7d)', color: 'sonnet' },
     seven_day_opus: { label: 'Opus (7d)', color: 'opus' },
-    seven_day_cowork: { label: 'Cowork (7d)', color: 'weekly' },
-    seven_day_oauth_apps: { label: 'OAuth Apps (7d)', color: 'weekly' },
+    seven_day_cowork: { label: 'Cowork (7d)', color: 'cowork' },
+    seven_day_omelette: { label: 'Design (7d)', color: 'design' },
+    seven_day_oauth_apps: { label: 'OAuth Apps (7d)', color: 'oauth' },
     extra_usage: { label: 'Extra Usage', color: 'extra' },
 };
 
@@ -676,6 +707,10 @@ function buildExtraRows(data) {
 
             const resetsText = document.createElement('span');
             resetsText.className = 'resets-at-text';
+            if (resetsAt) {
+                const settings = window._cachedSettings || {};
+                resetsText.textContent = formatResetsAt(resetsAt, true, settings.timeFormat || '12h', settings.weeklyDateFormat || 'date');
+            }
             row.appendChild(resetsText);
         }
 
@@ -708,20 +743,29 @@ function refreshExtraTimers() {
     });
 }
 
+const BANNER_HEIGHT = 28;
 const EXPAND_OVERHEAD = 28; // margin-top(12) + padding-top(6) + bottom buffer(10)
 
-function resizeWidget() {
+function resizeWidget(bannerVisible) {
+    const hasBanner = bannerVisible !== undefined
+        ? bannerVisible
+        : elements.updateBanner.style.display !== 'none';
+    const bannerOffset = hasBanner ? BANNER_HEIGHT : 0;
     const extraCount = elements.extraRows.children.length;
     const expandedOffset = isExpanded && extraCount > 0
         ? EXPAND_OVERHEAD + (extraCount * WIDGET_ROW_HEIGHT)
         : 0;
     const graphOffset = graphVisible ? GRAPH_HEIGHT : 0;
-    const totalHeight = WIDGET_HEIGHT_COLLAPSED + expandedOffset + graphOffset;
+    const totalHeight = WIDGET_HEIGHT_COLLAPSED + expandedOffset + graphOffset + bannerOffset;
     window.electronAPI.resizeWindow(totalHeight);
 }
 
+function normalizeUsageData(data) {
+    return data;
+}
+
 function updateUI(data) {
-    latestUsageData = data;
+    latestUsageData = normalizeUsageData(data);
 
     showMainContent();
     buildExtraRows(data);
@@ -803,6 +847,13 @@ function checkUsageAlerts(data) {
 // Apply or remove compact mode — switches view, resizes window, syncs all toggles
 function applyCompactMode(compact) {
     isCompactMode = compact;
+
+    // Add/remove compact-mode class from body for CSS styling
+    if (compact) {
+        document.body.classList.add('compact-mode');
+    } else {
+        document.body.classList.remove('compact-mode');
+    }
 
     // Show/hide the correct content view
     elements.mainContent.style.display = compact ? 'none' : 'block';
@@ -956,6 +1007,7 @@ function refreshTimers() {
             // Wait a few seconds for the server to update, then refresh
             setTimeout(() => {
                 fetchUsageData();
+                checkForUpdate();
             }, 3000);
         } else if (sessionDiff > 0) {
             sessionResetTriggered = false; // Reset flag when timer is active again
@@ -1017,7 +1069,7 @@ function startCountdown() {
     countdownInterval = setInterval(() => {
         refreshTimers();
         if (isExpanded) refreshExtraTimers();
-    }, 1000);
+    }, 30000);
 }
 
 // Update progress bar
@@ -1161,6 +1213,10 @@ function showLoginRequired() {
     alertFired.session_danger = false;
     alertFired.weekly_warn = false;
     alertFired.weekly_danger = false;
+    // Resize window to fit login content — without this the window stays at
+    // the default 155px widget height and the "Log in"/"Manual" buttons are
+    // clipped off-screen and unreachable on a frameless, non-resizable window.
+    window.electronAPI.resizeWindow(360);
 }
 
 function showMainContent() {
@@ -1211,10 +1267,18 @@ function renderChart(history) {
     if (usageChart) usageChart.destroy();
 
     const showSonnet = isExpanded && !!latestUsageData?.seven_day_sonnet;
+    const showOpus = isExpanded && !!latestUsageData?.seven_day_opus;
+    const showCowork = isExpanded && !!latestUsageData?.seven_day_cowork;
+    const showDesign = isExpanded && !!latestUsageData?.seven_day_omelette;
+    const showOAuthApps = isExpanded && !!latestUsageData?.seven_day_oauth_apps;
     const showExtraUsage = isExpanded && !!latestUsageData?.extra_usage;
     const allValues = history.flatMap((entry) => {
         const values = [entry.session, entry.weekly];
         if (showSonnet) values.push(entry.sonnet || 0);
+        if (showOpus) values.push(entry.opus || 0);
+        if (showCowork) values.push(entry.cowork || 0);
+        if (showDesign) values.push(entry.design || 0);
+        if (showOAuthApps) values.push(entry.oauthApps || 0);
         if (showExtraUsage) values.push(entry.extraUsage || 0);
         return values;
     });
@@ -1223,7 +1287,7 @@ function renderChart(history) {
     const datasets = [
         {
             label: 'Session',
-            data: history.map((entry) => entry.session),
+            data: history.map((entry) => ({ x: entry.timestamp, y: entry.session })),
             borderColor: '#8b5cf6',
             backgroundColor: 'transparent',
             borderWidth: 2,
@@ -1234,7 +1298,7 @@ function renderChart(history) {
         },
         {
             label: 'Weekly',
-            data: history.map((entry) => entry.weekly),
+            data: history.map((entry) => ({ x: entry.timestamp, y: entry.weekly })),
             borderColor: '#3b82f6',
             backgroundColor: 'transparent',
             borderWidth: 2,
@@ -1249,15 +1313,83 @@ function renderChart(history) {
         const sonnetData = history.map((entry) => entry.sonnet || 0);
         if (sonnetData.some((value) => value > 0)) {
             datasets.push({
-            label: 'Sonnet',
-            data: sonnetData,
-            borderColor: '#10b981',
-            backgroundColor: 'transparent',
-            borderWidth: 2,
-            stepped: true,
-            pointRadius: 0,
-            pointHoverRadius: 3,
-            pointHitRadius: 10
+                label: 'Sonnet',
+                data: history.map((entry) => ({ x: entry.timestamp, y: entry.sonnet || 0 })),
+                borderColor: '#f43f5e',
+                backgroundColor: 'transparent',
+                borderWidth: 2,
+                stepped: true,
+                pointRadius: 0,
+                pointHoverRadius: 3,
+                pointHitRadius: 10
+            });
+        }
+    }
+
+    if (showOpus) {
+        const opusData = history.map((entry) => entry.opus || 0);
+        if (opusData.some((value) => value > 0)) {
+            datasets.push({
+                label: 'Opus',
+                data: history.map((entry) => ({ x: entry.timestamp, y: entry.opus || 0 })),
+                borderColor: '#f59e0b',
+                backgroundColor: 'transparent',
+                borderWidth: 2,
+                stepped: true,
+                pointRadius: 0,
+                pointHoverRadius: 3,
+                pointHitRadius: 10
+            });
+        }
+    }
+
+    if (showCowork) {
+        const coworkData = history.map((entry) => entry.cowork || 0);
+        if (coworkData.some((value) => value > 0)) {
+            datasets.push({
+                label: 'Cowork',
+                data: history.map((entry) => ({ x: entry.timestamp, y: entry.cowork || 0 })),
+                borderColor: '#06b6d4',
+                backgroundColor: 'transparent',
+                borderWidth: 2,
+                stepped: true,
+                pointRadius: 0,
+                pointHoverRadius: 3,
+                pointHitRadius: 10
+            });
+        }
+    }
+
+    if (showDesign) {
+        const designData = history.map((entry) => entry.design || 0);
+        if (designData.some((value) => value > 0)) {
+            datasets.push({
+                label: 'Design',
+                data: history.map((entry) => ({ x: entry.timestamp, y: entry.design || 0 })),
+                borderColor: '#92400e',
+                backgroundColor: 'transparent',
+                borderWidth: 2,
+                stepped: true,
+                pointRadius: 0,
+                pointHoverRadius: 3,
+                pointHitRadius: 10
+            });
+        }
+    }
+
+    if (showOAuthApps) {
+        const oauthAppsData = history.map((entry) => entry.oauthApps || 0);
+        if (oauthAppsData.some((value) => value > 0)) {
+            datasets.push({
+                label: 'OAuth Apps',
+                data: history.map((entry) => ({ x: entry.timestamp, y: entry.oauthApps || 0 })),
+                borderColor: '#f97316',
+                backgroundColor: 'transparent',
+                borderWidth: 2,
+                stepped: true,
+                pointRadius: 0,
+                pointHoverRadius: 3,
+                pointHitRadius: 10
             });
         }
     }
@@ -1267,7 +1399,7 @@ function renderChart(history) {
         if (extraUsageData.some((value) => value > 0)) {
             datasets.push({
             label: 'Extra Usage',
-            data: extraUsageData,
+            data: history.map((entry) => ({ x: entry.timestamp, y: entry.extraUsage || 0 })),
             borderColor: '#f59e0b',
             backgroundColor: 'transparent',
             borderWidth: 2,
@@ -1279,12 +1411,12 @@ function renderChart(history) {
         }
     }
 
+    const firstDayMidnight = new Date(history[0].timestamp);
+    firstDayMidnight.setHours(0, 0, 0, 0);
+
     usageChart = new Chart(elements.usageChart.getContext('2d'), {
         type: 'line',
-        data: {
-            labels: history.map((entry) => entry.timestamp),
-            datasets
-        },
+        data: { datasets },
         options: {
             animation: false,
             responsive: true,
@@ -1295,17 +1427,31 @@ function renderChart(history) {
             },
             scales: {
                 x: {
-                    offset: true,
+                    type: 'linear',
+                    min: firstDayMidnight.getTime(),
+                    max: history[history.length - 1].timestamp,
+                    afterBuildTicks(axis) {
+                        const end = history[history.length - 1].timestamp;
+                        const d = new Date(firstDayMidnight.getTime());
+                        const ticks = [];
+                        while (d.getTime() <= end) {
+                            ticks.push({ value: d.getTime() });
+                            d.setDate(d.getDate() + 1);
+                        }
+                        axis.ticks = ticks;
+                    },
                     ticks: {
-                        autoSkip: false,
                         maxRotation: 0,
                         minRotation: 0,
                         font: {
                             size: 10
                         },
-                        callback(value, index) {
+                        callback(value) {
                             const tf = (window._cachedSettings || {}).timeFormat || '12h';
-                            return formatXAxisTick(history, index, tf);
+                            const spanMs = history.length > 1
+                                ? history[history.length - 1].timestamp - history[0].timestamp
+                                : 0;
+                            return formatTimestampTick(value, spanMs, tf);
                         }
                     },
                     grid: {
@@ -1333,8 +1479,7 @@ function renderChart(history) {
                 tooltip: {
                     callbacks: {
                         title(items) {
-                            const point = history[items[0].dataIndex];
-                            return new Date(point.timestamp).toLocaleString([], {
+                            return new Date(items[0].parsed.x).toLocaleString([], {
                                 month: 'short',
                                 day: 'numeric',
                                 hour: 'numeric',
@@ -1351,68 +1496,17 @@ function renderChart(history) {
     });
 }
 
-function formatXAxisTick(history, index, timeFormat) {
-    const tickIndexes = getXAxisTickIndexes(history.length);
-    if (!tickIndexes.has(index)) {
-        return '';
-    }
-
-    const timestamp = history[index]?.timestamp;
-    if (!timestamp) {
-        return '';
-    }
-
-    const spanMs = Math.max(0, history[history.length - 1].timestamp - history[0].timestamp);
+function formatTimestampTick(timestamp, spanMs, timeFormat) {
     const date = new Date(timestamp);
     const hour12 = (timeFormat || '12h') !== '24h';
 
     if (spanMs < 12 * 60 * 60 * 1000) {
-        return date.toLocaleTimeString([], {
-            hour: 'numeric',
-            minute: '2-digit',
-            hour12
-        });
+        return date.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit', hour12 });
     }
-
     if (spanMs < 48 * 60 * 60 * 1000) {
-        return date.toLocaleString([], {
-            weekday: 'short',
-            hour: 'numeric',
-            hour12
-        });
+        return date.toLocaleString([], { weekday: 'short', hour: 'numeric', hour12 });
     }
-
-    return date.toLocaleDateString([], {
-        month: 'short',
-        day: 'numeric'
-    });
-}
-
-function getXAxisTickIndexes(length) {
-    const indexes = new Set();
-    if (length <= 0) {
-        return indexes;
-    }
-
-    indexes.add(0);
-    if (length === 1) {
-        return indexes;
-    }
-
-    const targetTickCount = Math.min(5, length);
-    const lastIndex = length - 1;
-    indexes.add(lastIndex);
-
-    if (targetTickCount <= 2) {
-        return indexes;
-    }
-
-    const interval = lastIndex / (targetTickCount - 1);
-    for (let i = 1; i < targetTickCount - 1; i += 1) {
-        indexes.add(Math.round(interval * i));
-    }
-
-    return indexes;
+    return date.toLocaleDateString([], { month: 'short', day: 'numeric' });
 }
 
 // Add spinning animation for refresh button
@@ -1435,8 +1529,21 @@ let dangerThreshold = 90;
 
 async function loadSettings() {
     const settings = await window.electronAPI.getSettings();
+    const isLinux = window.electronAPI.platform === 'linux';
+    const isPortable = window.electronAPI.isPortable;
+    const autoStartUnsupported = isLinux || isPortable;
 
-    elements.autoStartToggle.checked = settings.autoStart;
+    elements.autoStartToggle.checked = autoStartUnsupported ? false : settings.autoStart;
+    elements.autoStartToggle.disabled = autoStartUnsupported;
+    if (elements.autoStartCol) {
+        elements.autoStartCol.classList.toggle('settings-col-disabled', autoStartUnsupported);
+    }
+    if (elements.autoStartHint) {
+        elements.autoStartHint.style.display = autoStartUnsupported ? 'inline' : 'none';
+        elements.autoStartHint.textContent = isPortable
+            ? 'Not supported in portable mode!'
+            : 'Not supported on Linux';
+    }
     elements.minimizeToTrayToggle.checked = settings.minimizeToTray;
     elements.alwaysOnTopToggle.checked = settings.alwaysOnTop;
     elements.showTrayStatsToggle.checked = settings.showTrayStats || false;
@@ -1481,7 +1588,7 @@ async function saveSettings() {
     }
 
     const settings = {
-        autoStart: elements.autoStartToggle.checked,
+        autoStart: (window.electronAPI.platform === 'linux' || window.electronAPI.isPortable) ? false : elements.autoStartToggle.checked,
         minimizeToTray: elements.minimizeToTrayToggle.checked,
         alwaysOnTop: elements.alwaysOnTopToggle.checked,
         showTrayStats: elements.showTrayStatsToggle.checked,
@@ -1520,6 +1627,31 @@ function applyTheme(theme) {
     const prefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
     const useDark = theme === 'dark' || (theme === 'system' && prefersDark);
     document.body.classList.toggle('theme-light', !useDark);
+}
+
+// Update check
+async function checkForUpdate() {
+    try {
+        const result = await window.electronAPI.checkForUpdate();
+        if (!result.hasUpdate) return;
+
+        const version = result.version;
+
+        // Show banner and expand window to compensate
+        elements.updateBannerText.textContent = `▲  Version ${version} available — click to download`;
+        elements.updateBanner.style.display = 'flex';
+        resizeWidget(true);
+
+        // Populate settings panel link if already visible
+        if (elements.settingsUpdateLink) {
+            elements.settingsUpdateLink.textContent = `→ v${version} available`;
+            elements.settingsUpdateLink.style.display = 'inline';
+        }
+
+        debugLog(`Update available: v${version}`);
+    } catch (e) {
+        debugLog('Update check failed silently', e);
+    }
 }
 
 // Start the application
