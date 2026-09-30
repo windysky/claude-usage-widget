@@ -350,3 +350,15 @@ commit_msg.txt
 .mcp.json
 PROJECT_HANDOFF.md
 PROJECT_LOG.md
+
+# MoAI-generated tooling files — kept local, never published (2026-09-30)
+/.agents/
+/.claudeignore
+/.codex/
+/.git_hooks/
+/.github/actions/detect-language/action.yml
+/.github/branch-protection.json.gtmpl
+/.github/labels.yml
+/.github/workflows/label-sync.yml
+/.worktreeinclude
+/AGENTS.md
